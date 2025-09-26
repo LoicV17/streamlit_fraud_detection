@@ -1,0 +1,8 @@
+streamlit==1.37.0
+pandas
+numpy
+boto3
+python-dotenv
+altair
+matplotlib
+seaborn
