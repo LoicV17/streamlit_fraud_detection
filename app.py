@@ -55,7 +55,7 @@ s3 = boto3.client("s3")
 BUCKET = os.getenv("AIRFLOW_S3_BUCKET", "fraud-detection-loicvalentini")
 KEY = "reports/full/scored_payments.parquet"
 
-@st.cache_data(ttl=60)
+@st.cache_data
 def load_data():
     obj = s3.get_object(Bucket=BUCKET, Key=KEY)
     df = pd.read_parquet(io.BytesIO(obj["Body"].read()))
@@ -123,6 +123,9 @@ elif granularity == "Semaine":
     df["period"] = df["event_time"].dt.to_period("W").apply(lambda r: r.start_time)
 elif granularity == "Mois":
     df["period"] = df["event_time"].dt.to_period("M").apply(lambda r: r.start_time)
+
+# Harmoniser : tout en datetime → évite les bugs d’échelle Altair
+df["period"] = pd.to_datetime(df["period"])
 
 fraude_by_period = (
     df.groupby("period")["prediction"].mean().reset_index().dropna()
