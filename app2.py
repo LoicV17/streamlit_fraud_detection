@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
-import boto3
 import os
 import altair as alt
 import seaborn as sns
 import matplotlib.pyplot as plt
 import io
 from dotenv import load_dotenv
+from sqlalchemy import create_engine
 
 # Charger les variables du fichier .env
 load_dotenv()
@@ -18,11 +18,9 @@ st.set_page_config(page_title="Fraud Detection Report", page_icon="🕵️", lay
 
 st.markdown("""
     <style>
-    /* Police moderne */
     html, body, [class*="css"]  {
         font-family: 'Segoe UI', sans-serif;
     }
-    /* KPIs cards */
     .metric-card {
         padding: 15px;
         border-radius: 12px;
@@ -39,7 +37,6 @@ st.markdown("""
         font-weight: bold;
         color: #111;
     }
-    /* Sidebar branding */
     .sidebar-text {
         color: #aaa;
         font-size: 12px;
@@ -51,8 +48,6 @@ st.markdown("""
 # ==============
 # CONFIG NEONDB
 # ==============
-from sqlalchemy import create_engine
-
 DB_URL = os.getenv("NEONDB_URL")
 engine = create_engine(DB_URL)
 
@@ -67,6 +62,7 @@ def load_data():
     df = pd.read_sql(query, engine)
     return df
 
+df = load_data()
 
 # ==============
 # HEADER
@@ -77,7 +73,6 @@ st.markdown("Un aperçu complet des transactions scorées avec détection de fra
 if st.button("🔄 Recharger les données"):
     st.cache_data.clear()
 df = load_data()
-
 
 # ==============
 # KPIs
@@ -105,7 +100,7 @@ st.subheader("📅 Évolution du taux de fraude")
 
 granularity = st.radio("Granularité :", ["Heure", "Jour", "Semaine", "Mois"], horizontal=True)
 
-# Créer une colonne datetime complète (année-mois-jour-heure-minute)
+# Reconstruction datetime
 if {"trans_year", "trans_month", "trans_day", "trans_hour"}.issubset(df.columns):
     df["event_time"] = pd.to_datetime(
         df["trans_year"].astype(str) + "-" +
@@ -116,7 +111,7 @@ if {"trans_year", "trans_month", "trans_day", "trans_hour"}.issubset(df.columns)
         errors="coerce"
     )
 else:
-    st.warning("⚠️ Colonnes temporelles manquantes. Vérifie ton CSV.")
+    st.warning("⚠️ Colonnes temporelles manquantes.")
     df["event_time"] = pd.NaT
 
 # Granularité
@@ -133,7 +128,6 @@ fraude_by_period = (
     df.groupby("period")["prediction"].mean().reset_index().dropna()
 )
 
-# Convertir en %
 fraude_by_period["fraud_rate"] = fraude_by_period["prediction"] * 100
 
 chart = alt.Chart(fraude_by_period).mark_line(point=True).encode(
@@ -151,7 +145,6 @@ st.subheader("🔎 Analyse des fraudes")
 
 col1, col2 = st.columns(2)
 
-# Pie chart par catégorie
 with col1:
     fraude_cat = df[df["prediction"] == 1]["category"].value_counts().reset_index()
     fraude_cat.columns = ["category", "count"]
@@ -161,7 +154,6 @@ with col1:
     ax1.set_title("Répartition des fraudes par catégorie")
     st.pyplot(fig1)
 
-# Bar chart par état
 with col2:
     US_STATES = {
         "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
@@ -192,11 +184,9 @@ with col2:
 
     st.altair_chart(chart_state, use_container_width=True)
 
-
 # ==========
 # DATASET COMPLET
 # ==========
-# Réorganiser et renommer les colonnes
 df_display = df.rename(columns={"unnamed_0": "trans_number"})
 df_display["date"] = df_display["event_time"].dt.strftime("%Y-%m-%d %H:%M")
 
@@ -208,7 +198,6 @@ st.subheader("📂 Détails des fraudes détectées")
 fraude_details = df_display[df_display["prediction"] == 1]
 st.dataframe(fraude_details)
 
-# Bouton téléchargement
 csv = fraude_details.to_csv(index=False).encode("utf-8")
 st.download_button("⬇️ Télécharger CSV complet", data=csv, file_name="fraudes.csv", mime="text/csv")
 
