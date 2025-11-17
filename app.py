@@ -49,19 +49,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============
-# CONFIG AWS
+# CONFIG NEONDB
 # ==============
-s3 = boto3.client("s3")
-BUCKET = os.getenv("AIRFLOW_S3_BUCKET", "fraud-detection-loicvalentini")
-KEY = "reports/full/scored_payments.parquet"
+from sqlalchemy import create_engine
+
+DB_URL = os.getenv("NEONDB_URL")
+engine = create_engine(DB_URL)
 
 @st.cache_data(ttl=60)
 def load_data():
-    obj = s3.get_object(Bucket=BUCKET, Key=KEY)
-    df = pd.read_parquet(io.BytesIO(obj["Body"].read()))
+    query = """
+        SELECT *
+        FROM scored_payments
+        ORDER BY id DESC
+        LIMIT 50000;
+    """
+    df = pd.read_sql(query, engine)
     return df
 
-df = load_data()
 
 # ==============
 # HEADER
