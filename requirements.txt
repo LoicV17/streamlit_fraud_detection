@@ -6,3 +6,6 @@ python-dotenv
 altair
 matplotlib
 seaborn
+sqlalchemy
+psycopg2-binary
+
