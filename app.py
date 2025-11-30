@@ -79,7 +79,7 @@ def load_data():
         if not SNAPSHOT_PATH.exists():
             st.error(
                 f"❌ Aucun snapshot local trouvé à l’emplacement : {SNAPSHOT_PATH}.\n"
-                "Ajoute par exemple un fichier 'data/fraud_snapshot.parquet' ou adapte le chemin."
+                "Ajoute par exemple un fichier 'data/scored_payments.parquet' ou adapte le chemin."
             )
             raise
 
