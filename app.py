@@ -1,14 +1,16 @@
 import streamlit as st
 import pandas as pd
+import boto3
 import os
 import altair as alt
 import seaborn as sns
 import matplotlib.pyplot as plt
 import io
+import pathlib
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
-# Charger les variables du fichier .env
+# Charger les variables du fichier .env (utile en local)
 load_dotenv()
 
 # ==============
@@ -18,9 +20,11 @@ st.set_page_config(page_title="Fraud Detection Report", page_icon="🕵️", lay
 
 st.markdown("""
     <style>
+    /* Police moderne */
     html, body, [class*="css"]  {
         font-family: 'Segoe UI', sans-serif;
     }
+    /* KPIs cards */
     .metric-card {
         padding: 15px;
         border-radius: 12px;
@@ -37,6 +41,7 @@ st.markdown("""
         font-weight: bold;
         color: #111;
     }
+    /* Sidebar branding */
     .sidebar-text {
         color: #aaa;
         font-size: 12px;
@@ -46,33 +51,59 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============
-# CONFIG NEONDB
+# CONFIG AWS / SNAPSHOT
 # ==============
-DB_URL = os.getenv("NEONDB_URL")
-engine = create_engine(DB_URL)
+s3 = boto3.client("s3")
+BUCKET = os.getenv("AIRFLOW_S3_BUCKET", "fraud-detection-loicvalentini")
+KEY = "reports/full/scored_payments.parquet"
 
-@st.cache_data(ttl=60)
+# Snapshot local pour fallback (à ajouter dans ton repo)
+SNAPSHOT_PATH = pathlib.Path("data/scored_payments.parquet")
+
+
+@st.cache_data(show_spinner="Chargement des données de transactions...")
 def load_data():
-    query = """
-        SELECT *
-        FROM scored_payments
-        ORDER BY id DESC
-        LIMIT 50000;
     """
-    df = pd.read_sql(query, engine)
-    return df
+    1️⃣ Essaie de charger les données depuis S3 (source 'prod').
+    2️⃣ En cas d'échec (quota, creds, réseau…), bascule sur un snapshot local.
+    """
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=KEY)
+        df = pd.read_parquet(io.BytesIO(obj["Body"].read()))
+        return df
 
-df = load_data()
+    except (ClientError, BotoCoreError, NoCredentialsError, OSError) as e:
+        st.warning("⚠️ Impossible de récupérer les données sur S3. Utilisation d’un snapshot local.")
+        st.caption(f"Détail de l’erreur S3 : {e}")
+
+        if not SNAPSHOT_PATH.exists():
+            st.error(
+                f"❌ Aucun snapshot local trouvé à l’emplacement : {SNAPSHOT_PATH}.\n"
+                "Ajoute par exemple un fichier 'data/fraud_snapshot.parquet' ou adapte le chemin."
+            )
+            raise
+
+        # Lecture du snapshot local (parquet ou csv)
+        if SNAPSHOT_PATH.suffix == ".parquet":
+            df = pd.read_parquet(SNAPSHOT_PATH)
+        else:
+            df = pd.read_csv(SNAPSHOT_PATH)
+
+        return df
+
 
 # ==============
-# HEADER
+# HEADER + DATA
 # ==============
 st.title("🕵️ Rapport Fraude Global")
 st.markdown("Un aperçu complet des transactions scorées avec détection de fraude.")
 
+# Chargement initial
+df = load_data()
+
 if st.button("🔄 Recharger les données"):
     st.cache_data.clear()
-df = load_data()
+    df = load_data()
 
 # ==============
 # KPIs
@@ -81,15 +112,35 @@ fraud_amount = df.loc[df["prediction"] == 1, "amt"].sum()
 
 col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
-    st.markdown(f"<div class='metric-card'><div class='metric-title'>Transactions cumulées</div><div class='metric-value'>{len(df):,}</div></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='metric-card'><div class='metric-title'>Transactions cumulées</div>"
+        f"<div class='metric-value'>{len(df):,}</div></div>",
+        unsafe_allow_html=True
+    )
 with col2:
-    st.markdown(f"<div class='metric-card'><div class='metric-title'>Fraudes cumulées</div><div class='metric-value'>{df['prediction'].sum():,}</div></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='metric-card'><div class='metric-title'>Fraudes cumulées</div>"
+        f"<div class='metric-value'>{df['prediction'].sum():,}</div></div>",
+        unsafe_allow_html=True
+    )
 with col3:
-    st.markdown(f"<div class='metric-card'><div class='metric-title'>Taux de fraude global</div><div class='metric-value'>{100*df['prediction'].mean():.2f}%</div></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='metric-card'><div class='metric-title'>Taux de fraude global</div>"
+        f"<div class='metric-value'>{100*df['prediction'].mean():.2f}%</div></div>",
+        unsafe_allow_html=True
+    )
 with col4:
-    st.markdown(f"<div class='metric-card'><div class='metric-title'>Montant total analysé (€)</div><div class='metric-value'>{df['amt'].sum():,.0f}</div></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='metric-card'><div class='metric-title'>Montant total analysé (€)</div>"
+        f"<div class='metric-value'>{df['amt'].sum():,.0f}</div></div>",
+        unsafe_allow_html=True
+    )
 with col5:
-    st.markdown(f"<div class='metric-card'><div class='metric-title'>Montant total fraudé (€)</div><div class='metric-value' style='color:red;'>{fraud_amount:,.0f}</div></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='metric-card'><div class='metric-title'>Montant total fraudé (€)</div>"
+        f"<div class='metric-value' style='color:red;'>{fraud_amount:,.0f}</div></div>",
+        unsafe_allow_html=True
+    )
 
 st.divider()
 
@@ -100,7 +151,7 @@ st.subheader("📅 Évolution du taux de fraude")
 
 granularity = st.radio("Granularité :", ["Heure", "Jour", "Semaine", "Mois"], horizontal=True)
 
-# Reconstruction datetime
+# Créer une colonne datetime complète (année-mois-jour-heure-minute)
 if {"trans_year", "trans_month", "trans_day", "trans_hour"}.issubset(df.columns):
     df["event_time"] = pd.to_datetime(
         df["trans_year"].astype(str) + "-" +
@@ -111,7 +162,7 @@ if {"trans_year", "trans_month", "trans_day", "trans_hour"}.issubset(df.columns)
         errors="coerce"
     )
 else:
-    st.warning("⚠️ Colonnes temporelles manquantes.")
+    st.warning("⚠️ Colonnes temporelles manquantes. Vérifie ton dataset.")
     df["event_time"] = pd.NaT
 
 # Granularité
@@ -128,6 +179,7 @@ fraude_by_period = (
     df.groupby("period")["prediction"].mean().reset_index().dropna()
 )
 
+# Convertir en %
 fraude_by_period["fraud_rate"] = fraude_by_period["prediction"] * 100
 
 chart = alt.Chart(fraude_by_period).mark_line(point=True).encode(
@@ -145,6 +197,7 @@ st.subheader("🔎 Analyse des fraudes")
 
 col1, col2 = st.columns(2)
 
+# Pie chart par catégorie
 with col1:
     fraude_cat = df[df["prediction"] == 1]["category"].value_counts().reset_index()
     fraude_cat.columns = ["category", "count"]
@@ -154,6 +207,7 @@ with col1:
     ax1.set_title("Répartition des fraudes par catégorie")
     st.pyplot(fig1)
 
+# Bar chart par état
 with col2:
     US_STATES = {
         "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
@@ -198,6 +252,7 @@ st.subheader("📂 Détails des fraudes détectées")
 fraude_details = df_display[df_display["prediction"] == 1]
 st.dataframe(fraude_details)
 
+# Bouton téléchargement
 csv = fraude_details.to_csv(index=False).encode("utf-8")
 st.download_button("⬇️ Télécharger CSV complet", data=csv, file_name="fraudes.csv", mime="text/csv")
 
@@ -207,7 +262,7 @@ st.download_button("⬇️ Télécharger CSV complet", data=csv, file_name="frau
 with st.sidebar:
     st.markdown("---")
     st.markdown(
-        "<span style='color:gray; font-size:12px;'>"
+        "<span class='sidebar-text'>"
         "Made by <b>Loic Valentini</b><br>"
         "Jedha AIA – Projet Bloc 3 – <i>Fraud_detection</i>"
         "</span>",
