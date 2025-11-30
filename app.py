@@ -66,11 +66,12 @@ def load_data():
     """
     1️⃣ Essaie de charger les données depuis S3 (source 'prod').
     2️⃣ En cas d'échec (quota, creds, réseau…), bascule sur un snapshot local.
+    3️⃣ Ne conserve que les transactions après l'année 2000.
     """
+    # --- Lecture des données ---
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=KEY)
         df = pd.read_parquet(io.BytesIO(obj["Body"].read()))
-        return df
 
     except (ClientError, BotoCoreError, NoCredentialsError, OSError) as e:
         st.warning("⚠️ Impossible de récupérer les données sur S3. Utilisation d’un snapshot local.")
@@ -89,7 +90,11 @@ def load_data():
         else:
             df = pd.read_csv(SNAPSHOT_PATH)
 
-        return df
+    # --- Filtre : ne garder que les années > 2000 ---
+    if "trans_year" in df.columns:
+        df = df[df["trans_year"] > 2000].copy()  # change en >= 2000 si besoin
+
+    return df
 
 
 # ==============
